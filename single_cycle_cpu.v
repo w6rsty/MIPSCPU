@@ -85,7 +85,7 @@ module single_cycle_cpu(
     wire inst_NOR , inst_OR   , inst_XOR, inst_SLL;
     wire inst_SRL , inst_ADDIU, inst_BEQ, inst_BNE;
     wire inst_LW  , inst_SW   , inst_LUI, inst_J;
-    wire inst_MUL , inst_DIV;
+    wire inst_MUL;
 
     assign inst_ADDU  = op_zero & sa_zero    & (funct == 6'b100001);// 无符号加法
     assign inst_SUBU  = op_zero & sa_zero    & (funct == 6'b100011);// 无符号减法
@@ -104,7 +104,7 @@ module single_cycle_cpu(
     assign inst_LUI   = (op == 6'b001111);                  // 立即数装载高半字节
     assign inst_J     = (op == 6'b000010);                  // 直接跳转
     assign inst_MUL   = (op == 6'b011100) & sa_zero & (funct == 6'b000010);
-    assign inst_DIV   = op_zero & (rd==5'd0) & sa_zero & (funct == 6'b011010);
+    // assign inst_DIV   = op_zero & (rd==5'd0) & sa_zero & (funct == 6'b011010);
 
     // 无条件跳转判断
     wire        j_taken;
@@ -230,33 +230,6 @@ module single_cycle_cpu(
     );
 
     assign alu_result = mult_end ? product[31:0] : alu_result0;
-
-    wire div_end;
-    wire [31:0] quotient;
-    wire div_begin;
-    reg DIV_r;
-    always @ (posedge clk0)
-    begin
-        if (inst_DIV)
-        begin
-              DIV_r <= 1;
-        end
-        else
-        begin
-              DIV_r <= 0;
-        end
-    end
-    assign div_begin = !DIV_r & inst_DIV;
-    divide divide0(
-        .clk            (clk0),
-        .div_begin      (div_begin),
-        .div_op1        (alu_operand1),  
-        .div_op2        (alu_operand2),
-        .quotient       (quotient),
-        .div_end        (div_end)     
-    );
-
-    assign alu_result = div_end ? quotient : alu_result;
 
 //---------------------------------{执行}begin------------------------------------//
     
