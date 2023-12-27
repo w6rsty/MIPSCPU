@@ -8,7 +8,6 @@
 //*************************************************************************
 `define STARTADDR 32'd0  // 程序起始地址
 module single_cycle_cpu(
-    input clk0,
     input clk,    // 时钟
     input resetn,  // 复位信号，低电平有效
 
@@ -31,7 +30,7 @@ module single_cycle_cpu(
     // 下一指令地址：seq_pc=pc+4
     assign seq_pc[31:2]    = pc[31:2] + 1'b1;
     assign seq_pc[1:0]     = pc[1:0];
-    // 新指令：若指令跳转，为跳转地址；否则为下一指令   
+    // 新指令：若指令跳转，为跳转地址；否则为下一指令
     assign next_pc = jbr_taken ? jbr_target : seq_pc;
     always @ (posedge clk)    // PC程序计数器
     begin
@@ -75,18 +74,26 @@ module single_cycle_cpu(
     assign offset = inst[15:0];   // 地址偏移量
     assign target = inst[25:0];   // 目标地址
 
-    wire op_zero; 
+    wire op_zero;  
     wire sa_zero;  
-    assign op_zero = ~(|op); // 操作码全0
-    assign sa_zero = ~(|sa); // sa域全0
+    wire rd_zero;
+    wire rs_zero;
+    wire rt_zero;
+    assign rd_zero = ~(|rd);
+    assign rs_zero = ~(|rs);
+    assign rt_zero = ~(|rt);
+    assign op_zero = ~(|op);
+    assign sa_zero = ~(|sa);
     
     // 实现指令列表
+    wire inst_MUL, inst_DIV; 
     wire inst_ADDU, inst_SUBU , inst_SLT, inst_AND;
     wire inst_NOR , inst_OR   , inst_XOR, inst_SLL;
     wire inst_SRL , inst_ADDIU, inst_BEQ, inst_BNE;
     wire inst_LW  , inst_SW   , inst_LUI, inst_J;
-    wire inst_MUL;
 
+    assign inst_DIV   = op_zero & sa_zero    & (funct == 6'b011010);//不完美的除法
+    assign inst_MUL   = (op == 6'b011100)    & sa_zero    & (funct == 6'b000010);//不完美的乘法
     assign inst_ADDU  = op_zero & sa_zero    & (funct == 6'b100001);// 无符号加法
     assign inst_SUBU  = op_zero & sa_zero    & (funct == 6'b100011);// 无符号减法
     assign inst_SLT   = op_zero & sa_zero    & (funct == 6'b101010);// 小于则置位
@@ -103,8 +110,6 @@ module single_cycle_cpu(
     assign inst_SW    = (op == 6'b101011);                  // 向内存存储
     assign inst_LUI   = (op == 6'b001111);                  // 立即数装载高半字节
     assign inst_J     = (op == 6'b000010);                  // 直接跳转
-    assign inst_MUL   = (op == 6'b011100) & sa_zero & (funct == 6'b000010);
-    // assign inst_DIV   = op_zero & (rd==5'd0) & sa_zero & (funct == 6'b011010);
 
     // 无条件跳转判断
     wire        j_taken;
@@ -134,8 +139,12 @@ module single_cycle_cpu(
     wire [31:0] rf_wdata;
     wire [31:0] rs_value, rt_value;
 
+    wire rf_hi_lo_wen;
+    wire [31:0] rf_hi_wdata;
+    wire [31:0] rf_lo_wdata;
+
     regfile rf_module(
-        .clk    (clk0      ),  // I, 1
+        .clk    (clk      ),  // I, 1
         .wen    (rf_wen   ),  // I, 1
         .raddr1 (rs       ),  // I, 5
         .raddr2 (rt       ),  // I, 5
@@ -143,6 +152,10 @@ module single_cycle_cpu(
         .wdata  (rf_wdata ),  // I, 32
         .rdata1 (rs_value ),  // O, 32
         .rdata2 (rt_value ),   // O, 32
+        
+        .hi_lo_wen (rf_hi_lo_wen),  // I, 1
+        .hi_wdata  (rf_hi_wdata ),  // I, 32
+        .lo_wdata  (rf_lo_wdata )   // I, 32
 
         //display rf
         .test_addr(rf_addr),
@@ -151,9 +164,13 @@ module single_cycle_cpu(
     
     
     // 传递到执行模块的ALU源操作数和操作码
+    wire inst_mul, inst_div;
     wire inst_add, inst_sub, inst_slt,inst_sltu;
     wire inst_and, inst_nor, inst_or, inst_xor;
     wire inst_sll, inst_srl, inst_sra,inst_lui;
+    
+    assign inst_mul = inst_MUL;  //做乘法运算
+    assign inst_div = inst_DIV;  //做除法运算
     assign inst_add = inst_ADDU | inst_ADDIU | inst_LW | inst_SW; // 做加法运算指令
     assign inst_sub = inst_SUBU; // 减法
     assign inst_slt = inst_SLT;  // 小于置位
@@ -176,10 +193,12 @@ module single_cycle_cpu(
     
     wire [31:0] alu_operand1;
     wire [31:0] alu_operand2;
-    wire [11:0] alu_control;
+    wire [13:0] alu_control;
     assign alu_operand1 = inst_shf_sa ? {27'd0,sa} : rs_value;
     assign alu_operand2 = inst_imm_sign ? sext_imm : rt_value;
-    assign alu_control = {inst_add,        // ALU操作码，独热编码
+    assign alu_control = {inst_div,
+                          inst_mul,
+                          inst_add,        
                           inst_sub,
                           inst_slt,
                           inst_sltu,
@@ -195,50 +214,25 @@ module single_cycle_cpu(
 
 //---------------------------------{执行}begin------------------------------------//
     wire [31:0] alu_result;
-    wire [31:0] alu_result0;
+    wire [31:0] alu_hi_result;
+    wire [31:0] alu_lo_result;
 
     alu alu_module(
         .alu_control  (alu_control ),  // I, 12, ALU控制信号
         .alu_src1     (alu_operand1),  // I, 32, ALU操作数1
         .alu_src2     (alu_operand2),  // I, 32, ALU操作数2
-        .alu_result   (alu_result0  )   // O, 32, ALU结果
+        .alu_result   (alu_result  ),   // O, 32, ALU结果
+        .alu_hi_result(alu_hi_result),   // O, 32, ALU高位结果
+        .alu_lo_result(alu_lo_result)   // O, 32, ALU结果
     );
-
-    wire mult_end;
-    wire [63:0] product;
-    wire mult_begin;
-    reg MUL_r;
-    always @ (posedge clk0)
-    begin
-        if (inst_MUL)
-        begin
-              MUL_r <= 1;
-        end
-        else
-        begin
-              MUL_r <= 0;
-        end
-    end
-    assign mult_begin = !MUL_r & inst_MUL;
-    multiply multiply0(
-        .clk            (clk0),
-        .mult_begin     (mult_begin),
-        .mult_op1       (alu_operand1),  
-        .mult_op2       (alu_operand2),
-        .product        (product),
-        .mult_end       (mult_end)     
-    );
-
-    assign alu_result = mult_end ? product[31:0] : alu_result0;
-
-//---------------------------------{执行}begin------------------------------------//
+//----------------------------------{执行}end-------------------------------------//
     
 //---------------------------------{访存}begin------------------------------------//
     wire [3 :0] dm_wen;
     wire [31:0] dm_addr;
     wire [31:0] dm_wdata;
     wire [31:0] dm_rdata;
-    assign dm_wen   = {4{inst_SW}} & resetn;    // 内存写使能,非resetn状态下有效
+    assign dm_wen   = {4{inst_SW & resetn}};    // 内存写使能,非resetn状态下有效
     assign dm_addr  = alu_result;               // 内存写地址，为ALU结果
     assign dm_wdata = rt_value;                 // 内存写数据，为rt寄存器值
     data_ram data_ram_module(
@@ -255,14 +249,20 @@ module single_cycle_cpu(
 //----------------------------------{访存}end-------------------------------------//
 
 //---------------------------------{写回}begin------------------------------------//
-    wire inst_wdest_rt;   // 寄存器堆写入地址为rt的指令
-    wire inst_wdest_rd;   // 寄存器堆写入地址为rd的指令
+    wire inst_wdest_rt;    // 寄存器堆写入地址为rt的指令
+    wire inst_wdest_rd;    // 寄存器堆写入地址为rd的指令
+    wire inst_wdest_hi_lo; // 寄存器堆写入地址为HI或LO的指令
     assign inst_wdest_rt = inst_ADDIU | inst_LW | inst_LUI;
     assign inst_wdest_rd = inst_ADDU | inst_SUBU | inst_SLT | inst_AND | inst_NOR
-                          | inst_OR   | inst_XOR  | inst_SLL | inst_SRL;                   
+                          | inst_OR   | inst_XOR  | inst_SLL | inst_SRL | inst_MUL;
+    assgin inst_wdest_hi_lo = inst_DIV;                   
     // 寄存器堆写使能信号，非复位状态下有效
-    assign rf_wen   = (inst_wdest_rt | inst_wdest_rd | mult_end) & resetn;
-    assign rf_waddr = (inst_wdest_rd | mult_end) ? rd : rt;        // 寄存器堆写地址rd或rt
+    assign rf_wen   = (inst_wdest_rt | inst_wdest_rd) & resetn;
+    assign rf_waddr = inst_wdest_rd ? rd : rt;        // 寄存器堆写地址rd或rt
     assign rf_wdata = inst_LW ? dm_rdata : alu_result;// 写回结果，为load结果或ALU结果
+
+    assign rf_hi_lo_wen = inst_wdest_hi_lo & resetn;
+    assign rf_hi_wdata  = alu_hi_result;
+    assign rf_lo_wdata  = alu_lo_result;
 //----------------------------------{写回}end-------------------------------------//
 endmodule
