@@ -155,7 +155,7 @@ module single_cycle_cpu(
         
         .hi_lo_wen (rf_hi_lo_wen),  // I, 1
         .hi_wdata  (rf_hi_wdata ),  // I, 32
-        .lo_wdata  (rf_lo_wdata )   // I, 32
+        .lo_wdata  (rf_lo_wdata ),   // I, 32
 
         //display rf
         .test_addr(rf_addr),
@@ -255,7 +255,9 @@ module single_cycle_cpu(
     assign inst_wdest_rt = inst_ADDIU | inst_LW | inst_LUI;
     assign inst_wdest_rd = inst_ADDU | inst_SUBU | inst_SLT | inst_AND | inst_NOR
                           | inst_OR   | inst_XOR  | inst_SLL | inst_SRL | inst_MUL;
-    assgin inst_wdest_hi_lo = inst_DIV;                   
+    assign inst_wdest_hi_lo = inst_DIV;     
+
+              
     // 寄存器堆写使能信号，非复位状态下有效
     assign rf_wen   = (inst_wdest_rt | inst_wdest_rd) & resetn;
     assign rf_waddr = inst_wdest_rd ? rd : rt;        // 寄存器堆写地址rd或rt
